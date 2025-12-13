@@ -1,0 +1,468 @@
+// Inject an independent "advanced" calculator into every element with class "DaBox"
+// after 300ms. Self-contained, no external deps.
+//
+// Features:
+// - Parses and evaluates complex expressions with parentheses,
+//   implicit multiplication (e.g. 7(2) -> 7*(2)), unary minus, decimals, ^, +, - , * , /
+// - Supports common math functions: sin, cos, tan, sqrt, ln, log, abs, exp, pow
+// - Simple UI: expression input, evaluate button, clear, history
+// - Keyboard: Enter evaluates, Esc clears
+//
+// Usage: include this file (or paste into a script tag). It will run automatically.
+
+(function () {
+  "use strict";
+
+  // Wait 300ms before injecting
+  setTimeout(() => {
+    const boxes = Array.from(document.getElementsByClassName("DaBox"));
+    if (!boxes.length) return;
+
+    boxes.forEach((container, idx) => {
+      // create unique IDs to avoid collisions
+      const idPrefix = "xcalc_" + Date.now().toString(36) + "_" + idx + "_";
+
+      // Minimal styles scoped inside a <style> tag injected with the widget
+      const html = `
+        <style>
+          /* Scoped to the calculator inserted here */
+          #${idPrefix}wrapper { font-family: Arial, Helvetica, sans-serif; max-width:420px; background:#f5f7fa; border:1px solid #c9ced6; padding:12px; border-radius:8px; box-sizing:border-box; }
+          #${idPrefix}display { width:100%; box-sizing:border-box; padding:8px; font-size:18px; border:1px solid #9aa6b2; border-radius:4px; background:#fff; color:#111; }
+          #${idPrefix}result { margin-top:8px; font-size:16px; min-height:28px; color:#0b6; background:#eef; padding:6px 8px; border-radius:4px; border:1px solid #cce; }
+          #${idPrefix}controls { margin-top:8px; display:flex; gap:8px; }
+          #${idPrefix}controls button { padding:6px 10px; font-size:14px; border-radius:4px; border:1px solid #99a; background:#e9eef6; cursor:pointer; }
+          #${idPrefix}controls button:active { transform:translateY(1px); }
+          #${idPrefix}keys { margin-top:10px; display:grid; grid-template-columns:repeat(6,1fr); gap:6px; }
+          #${idPrefix}keys button { padding:8px; font-size:13px; border-radius:4px; border:1px solid #999; background:#fff; cursor:pointer; }
+          #${idPrefix}history { margin-top:10px; font-size:13px; max-height:120px; overflow:auto; background:#fff; border:1px solid #e0e6ea; padding:6px; border-radius:4px; }
+          #${idPrefix}history .entry { padding:4px 6px; border-bottom:1px dashed #eee; }
+          #${idPrefix}history .entry:last-child { border-bottom: none; }
+          .xcalc-fn { background:#f0f7ff; }
+          .xcalc-op { background:#fff7e6; }
+        </style>
+
+        <div id="${idPrefix}wrapper" role="application" aria-label="Advanced calculator">
+          <input id="${idPrefix}display" aria-label="Expression" placeholder="Type expression, e.g. 1+(8-7(2))" />
+          <div id="${idPrefix}result" aria-live="polite">Result: <span id="${idPrefix}resultVal">—</span></div>
+
+          <div id="${idPrefix}controls">
+            <button id="${idPrefix}evalBtn">Evaluate</button>
+            <button id="${idPrefix}clearBtn">Clear</button>
+            <button id="${idPrefix}copyBtn">Copy Result</button>
+            <button id="${idPrefix}pasteBtn">Paste</button>
+            <button id="${idPrefix}helpBtn">Help</button>
+          </div>
+
+          <div id="${idPrefix}keys" aria-hidden="false">
+            <button class="xcalc-op"> ( </button>
+            <button class="xcalc-op"> ) </button>
+            <button class="xcalc-op"> ^ </button>
+            <button class="xcalc-op"> % </button>
+            <button class="xcalc-fn"> sqrt( </button>
+            <button class="xcalc-fn"> abs( </button>
+
+            <button> 7 </button>
+            <button> 8 </button>
+            <button> 9 </button>
+            <button class="xcalc-op"> / </button>
+            <button class="xcalc-fn"> sin( </button>
+            <button class="xcalc-fn"> cos( </button>
+
+            <button> 4 </button>
+            <button> 5 </button>
+            <button> 6 </button>
+            <button class="xcalc-op"> * </button>
+            <button class="xcalc-fn"> tan( </button>
+            <button class="xcalc-fn"> ln( </button>
+
+            <button> 1 </button>
+            <button> 2 </button>
+            <button> 3 </button>
+            <button class="xcalc-op"> - </button>
+            <button class="xcalc-fn"> log( </button>
+            <button class="xcalc-fn"> exp( </button>
+
+            <button> 0 </button>
+            <button> . </button>
+            <button class="xcalc-op"> , </button>
+            <button class="xcalc-op"> + </button>
+            <button id="${idPrefix}ansBtn" title="Insert last answer"> Ans </button>
+            <button id="${idPrefix}evalKey" title="Evaluate"> = </button>
+          </div>
+
+          <div id="${idPrefix}history" aria-live="polite"></div>
+        </div>
+      `;
+
+      container.innerHTML = html;
+
+      // Setup calculator logic
+      const display = document.getElementById(idPrefix + "display");
+      const resultVal = document.getElementById(idPrefix + "resultVal");
+      const evalBtn = document.getElementById(idPrefix + "evalBtn");
+      const clearBtn = document.getElementById(idPrefix + "clearBtn");
+      const copyBtn = document.getElementById(idPrefix + "copyBtn");
+      const pasteBtn = document.getElementById(idPrefix + "pasteBtn");
+      const helpBtn = document.getElementById(idPrefix + "helpBtn");
+      const keys = document.getElementById(idPrefix + "keys");
+      const historyEl = document.getElementById(idPrefix + "history");
+      const ansBtn = document.getElementById(idPrefix + "ansBtn");
+      const evalKey = document.getElementById(idPrefix + "evalKey");
+
+      let lastAnswer = null;
+      const maxHistory = 50;
+
+      // --- Expression parser / evaluator ---
+      function tokenize(expr) {
+        const tokens = [];
+        const isDigit = (c) => /[0-9]/.test(c);
+        const isAlpha = (c) => /[a-zA-Z]/.test(c);
+        let i = 0;
+        while (i < expr.length) {
+          const ch = expr[i];
+          if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") { i++; continue; }
+          if (isDigit(ch) || (ch === ".")) {
+            let j = i;
+            while (j < expr.length && /[0-9.]/.test(expr[j])) j++;
+            tokens.push({ type: "number", value: parseFloat(expr.slice(i, j)) });
+            i = j;
+            continue;
+          }
+          if (isAlpha(ch)) {
+            let j = i;
+            while (j < expr.length && /[a-zA-Z0-9_]/.test(expr[j])) j++;
+            const name = expr.slice(i, j).toLowerCase();
+            tokens.push({ type: "ident", value: name });
+            i = j;
+            continue;
+          }
+          if (ch === "(") { tokens.push({ type: "lparen" }); i++; continue; }
+          if (ch === ")") { tokens.push({ type: "rparen" }); i++; continue; }
+          if (ch === ",") { tokens.push({ type: "comma" }); i++; continue; }
+          // operators and single-char tokens
+          if ("+-*/^%".includes(ch)) {
+            tokens.push({ type: "op", value: ch });
+            i++;
+            continue;
+          }
+          // unknown char -> throw later
+          tokens.push({ type: "unknown", value: ch });
+          i++;
+        }
+        return tokens;
+      }
+
+      // Insert implicit multiplication tokens: e.g. number ( -> number * (
+      function insertImplicitMultiplication(tokens) {
+        const out = [];
+        for (let i = 0; i < tokens.length; i++) {
+          const t = tokens[i];
+          out.push(t);
+          if (i + 1 < tokens.length) {
+            const a = t;
+            const b = tokens[i + 1];
+            const aCanEndFactor = (a.type === "number" || a.type === "rparen" || (a.type === "ident")); // 2, ), func
+            const bCanStartFactor = (b.type === "lparen" || b.type === "number" || b.type === "ident");
+            if (aCanEndFactor && bCanStartFactor) {
+              // implicit multiplication
+              out.push({ type: "op", value: "*" });
+            }
+          }
+        }
+        return out;
+      }
+
+      // Shunting-yard -> RPN
+      function toRPN(tokens) {
+        const out = [];
+        const ops = [];
+        const precedence = { "+": 2, "-": 2, "*": 3, "/": 3, "%": 3, "^": 4, "u-": 5 };
+        const rightAssoc = { "^": true, "u-": true };
+
+        for (let i = 0; i < tokens.length; i++) {
+          const t = tokens[i];
+          if (t.type === "number") {
+            out.push(t);
+            continue;
+          }
+          if (t.type === "ident") {
+            // function or constant
+            // constants handled as numbers later
+            ops.push(t);
+            continue;
+          }
+          if (t.type === "op") {
+            let op = t.value;
+            // detect unary minus: if op is '-' and previous token starts an expression
+            const prev = i > 0 ? tokens[i - 1] : null;
+            const startsExpr = prev == null || (prev.type === "op") || (prev.type === "lparen") || (prev.type === "comma");
+            if (op === "-" && startsExpr) op = "u-";
+            while (ops.length) {
+              const top = ops[ops.length - 1];
+              if (top.type === "op" || top.type === "ident") {
+                const topOp = top.type === "op" ? top.value : (top.type === "ident" ? "fn" : null);
+                // if top is an operator
+                if (top.type === "op") {
+                  const p1 = precedence[topOp] || 0;
+                  const p2 = precedence[op] || 0;
+                  if ((rightAssoc[op] && p2 < p1) || (!rightAssoc[op] && p2 <= p1)) {
+                    out.push(ops.pop());
+                    continue;
+                  }
+                }
+              }
+              break;
+            }
+            ops.push({ type: "op", value: op });
+            continue;
+          }
+          if (t.type === "lparen") {
+            ops.push(t);
+            continue;
+          }
+          if (t.type === "rparen") {
+            let foundLeft = false;
+            while (ops.length) {
+              const top = ops.pop();
+              if (top.type === "lparen") { foundLeft = true; break; }
+              out.push(top);
+            }
+            // If a function is on the operator stack, pop it onto the output queue
+            if (ops.length && ops[ops.length - 1] && ops[ops.length - 1].type === "ident") {
+              out.push(ops.pop());
+            }
+            if (!foundLeft) throw new Error("Mismatched parentheses");
+            continue;
+          }
+          if (t.type === "comma") {
+            // pop until left paren
+            let foundLeft = false;
+            while (ops.length) {
+              const top = ops[ops.length - 1];
+              if (top.type === "lparen") { foundLeft = true; break; }
+              out.push(ops.pop());
+            }
+            if (!foundLeft) throw new Error("Misplaced comma or mismatched parentheses");
+            continue;
+          }
+          if (t.type === "unknown") {
+            throw new Error("Unknown token: " + t.value);
+          }
+        }
+
+        while (ops.length) {
+          const top = ops.pop();
+          if (top.type === "lparen" || top.type === "rparen") throw new Error("Mismatched parentheses");
+          out.push(top);
+        }
+        return out;
+      }
+
+      // Evaluate RPN
+      function evalRPN(rpn) {
+        const stack = [];
+        const funcs = {
+          "sin": (x) => Math.sin(toRadiansIfLooksLikeDegrees(x)),
+          "cos": (x) => Math.cos(toRadiansIfLooksLikeDegrees(x)),
+          "tan": (x) => Math.tan(toRadiansIfLooksLikeDegrees(x)),
+          "sqrt": (x) => Math.sqrt(x),
+          "abs": (x) => Math.abs(x),
+          "ln": (x) => Math.log(x),
+          "log": (x) => Math.log10 ? Math.log10(x) : Math.log(x) / Math.LN10,
+          "exp": (x) => Math.exp(x),
+          "pow": (a, b) => Math.pow(a, b)
+        };
+
+        function isFiniteNumber(n) { return typeof n === "number" && isFinite(n); }
+
+        for (const token of rpn) {
+          if (token.type === "number") {
+            stack.push(token.value);
+            continue;
+          }
+          if (token.type === "ident") {
+            const name = token.value;
+            // common constants
+            if (name === "pi") { stack.push(Math.PI); continue; }
+            if (name === "e") { stack.push(Math.E); continue; }
+            // function: expect 1 arg (some take 2 if comma used, e.g., pow)
+            if (funcs[name]) {
+              // try to get 2 args for pow-like forms if available (we'll decide by stack)
+              const arity = (name === "pow") ? 2 : 1;
+              if (stack.length < arity) throw new Error("Not enough arguments for " + name);
+              const args = [];
+              for (let k = 0; k < arity; k++) args.unshift(stack.pop());
+              const val = funcs[name].apply(null, args);
+              if (!isFiniteNumber(val)) throw new Error("Invalid result for " + name);
+              stack.push(val);
+              continue;
+            }
+            // unknown identifier -> error
+            throw new Error("Unknown identifier: " + name);
+          }
+          if (token.type === "op") {
+            const op = token.value;
+            if (op === "u-") {
+              if (!stack.length) throw new Error("Missing operand for unary -");
+              const v = stack.pop();
+              stack.push(-v);
+              continue;
+            }
+            if (stack.length < 2) throw new Error("Missing operands for " + op);
+            const b = stack.pop(), a = stack.pop();
+            let res;
+            switch (op) {
+              case "+": res = a + b; break;
+              case "-": res = a - b; break;
+              case "*": res = a * b; break;
+              case "/": res = a / b; break;
+              case "%": res = a % b; break;
+              case "^": res = Math.pow(a, b); break;
+              default: throw new Error("Unknown operator: " + op);
+            }
+            if (!isFiniteNumber(res)) throw new Error("Invalid arithmetic result");
+            stack.push(res);
+            continue;
+          }
+          throw new Error("Unexpected RPN token");
+        }
+
+        if (stack.length !== 1) throw new Error("Invalid expression");
+        return stack[0];
+      }
+
+      // Heuristic: user might expect degrees for trig if numbers are "nice" but
+      // this is ambiguous; keep trig functions in radians by default.
+      // For simple friendliness we allow deg notation like 30deg or use "deg()" not implemented.
+      function toRadiansIfLooksLikeDegrees(v) { return v; /* keep radians for clarity */ }
+
+      function evaluateExpression(input) {
+        // Preprocess: allow implicit multiplication, replace percentage suffix like '50%' -> (50/100)
+        let s = String(input || "").replace(/\u00A0/g, "").trim();
+        if (s === "") throw new Error("Empty expression");
+        // convert % as postfix to /100, recursively handle e.g. "50%+1" -> "(50/100)+1"
+        s = s.replace(/([0-9.]+)\s*%/g, "($1/100)");
+        // Tokenize
+        const tokens0 = tokenize(s);
+        const tokens = insertImplicitMultiplication(tokens0);
+        const rpn = toRPN(tokens);
+        const val = evalRPN(rpn);
+        return val;
+      }
+
+      // --- UI wiring ---
+      function showResult(value) {
+        if (value === null) {
+          resultVal.textContent = "—";
+          resultVal.style.color = "";
+        } else {
+          resultVal.textContent = String(value);
+          resultVal.style.color = isFinite(value) ? "#116633" : "#a00";
+        }
+      }
+
+      function addHistory(expr, value) {
+        const entry = document.createElement("div");
+        entry.className = "entry";
+        entry.textContent = expr + "  =  " + value;
+        historyEl.insertBefore(entry, historyEl.firstChild);
+        // limit history
+        while (historyEl.children.length > maxHistory) historyEl.removeChild(historyEl.lastChild);
+      }
+
+      function doEvaluate() {
+        const expr = display.value;
+        try {
+          const val = evaluateExpression(expr);
+          lastAnswer = val;
+          showResult(val);
+          addHistory(expr, val);
+          return val;
+        } catch (err) {
+          showResult("Error: " + (err && err.message ? err.message : "invalid"));
+          return null;
+        }
+      }
+
+      evalBtn.addEventListener("click", () => { doEvaluate(); display.focus(); });
+      evalKey.addEventListener("click", () => { doEvaluate(); display.focus(); });
+
+      clearBtn.addEventListener("click", () => {
+        display.value = "";
+        showResult(null);
+        display.focus();
+      });
+
+      copyBtn.addEventListener("click", async () => {
+        try {
+          const txt = resultVal.textContent || "";
+          await (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject());
+        } catch (e) {
+          // fallback
+          const ta = document.createElement("textarea");
+          ta.value = resultVal.textContent || "";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); } catch (e) {}
+          document.body.removeChild(ta);
+        }
+      });
+
+      pasteBtn.addEventListener("click", async () => {
+        try {
+          const text = await (navigator.clipboard && navigator.clipboard.readText ? navigator.clipboard.readText() : Promise.resolve(""));
+          if (text) display.value += text;
+        } catch (e) { /* ignore */ }
+        display.focus();
+      });
+
+      helpBtn.addEventListener("click", () => {
+        alert("Calculator rules:\n- Supports + - * / ^ % and parentheses\n- Implicit multiplication allowed: 7(2) means 7*(2)\n- Common functions: sin(), cos(), tan(), sqrt(), ln(), log(), abs(), exp(), pow(a,b)\n- Press Enter to evaluate, Esc to clear");
+      });
+
+      keys.addEventListener("click", (ev) => {
+        const t = ev.target;
+        if (t.tagName !== "BUTTON") return;
+        const txt = t.textContent.trim();
+        if (!txt) return;
+        if (txt === "=") { doEvaluate(); display.focus(); return; }
+        if (txt === "Ans") {
+          if (lastAnswer !== null) display.value += String(lastAnswer);
+          display.focus();
+          return;
+        }
+        // insert at cursor
+        const start = display.selectionStart || display.value.length;
+        const end = display.selectionEnd || start;
+        const newVal = display.value.slice(0, start) + txt + display.value.slice(end);
+        display.value = newVal;
+        const caret = start + txt.length;
+        display.setSelectionRange(caret, caret);
+        display.focus();
+      });
+
+      // Keyboard: Enter evaluates, Esc clears
+      display.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") { ev.preventDefault(); doEvaluate(); }
+        if (ev.key === "Escape") { ev.preventDefault(); display.value = ""; showResult(null); }
+        if (ev.key === "Tab") { /* allow tab */ }
+      });
+
+      // allow clicking history to reuse
+      historyEl.addEventListener("click", (ev) => {
+        const entry = ev.target.closest(".entry");
+        if (!entry) return;
+        const txt = entry.textContent.split("  =  ")[0] || "";
+        display.value = txt;
+        display.focus();
+      });
+
+      // initialize
+      showResult(null);
+      display.value = "";
+      // focus first box for convenience
+      if (idx === 0) display.focus();
+    });
+  }, 300);
+
+})();
