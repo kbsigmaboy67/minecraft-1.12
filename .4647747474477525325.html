@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Image to SVG Pixel Art Exporter</title>
+    <style>
+        :root {
+            --bg-main: #171921;
+            --bg-panel: #1E212B;
+            --bg-zone: #181C24;
+            --input: #16181F;
+            --border: #292c34;
+            --primary: #2FF924;
+            --primary-dark: #21C31D;
+            --primary-hov: #8aff7a;
+            --primary-fade: #2ff92422;
+            --font: #C2E2CD;
+            --subtle: #6db881;
+            --red: #EA3C53;
+        }
+        html, body {
+            background: var(--bg-main);
+            color: var(--font);
+        }
+        body {
+            font-family: 'Fira Mono', 'Consolas', 'Menlo', 'Monaco', 'Monospace', Arial, sans-serif;
+            padding: 2em;
+            max-width: 740px;
+            margin: auto;
+            background: var(--bg-main);
+        }
+        h2 {
+            color: var(--primary);
+            letter-spacing: 2px;
+            text-shadow: 0 2px 12px var(--primary-fade);
+            margin-top: 0;
+        }
+        #controls {
+            margin: 2em 0 1.25em 0;
+            padding: 1.3em 1.8em 1.3em 1.8em;
+            background: var(--bg-panel);
+            border-radius: 14px;
+            border: 1.5px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 1.2em;
+            box-shadow: 0 2px 16px 0 #2ff9240d;
+        }
+        .row {
+            display: flex;
+            gap: 1.2em;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        label {
+            font-weight: 500;
+            color: var(--subtle);
+            letter-spacing: 0.5px;
+        }
+        ::selection { background: #1ed76077; }
+        #preview, #blobPreview {
+            margin-top: 1em;
+            max-width: 320px;
+            max-height: 320px;
+            background: var(--bg-zone);
+            border-radius: 10px;
+            border: 1.6px solid var(--border);
+            box-shadow: 0 2px 15px #13ea4d10;
+        }
+        .draw-zone {
+            max-width: 320px;
+            margin-bottom: 1em;
+            border-radius: 12px;
+            position: relative;
+            aspect-ratio: 1 / 1;
+            border: 2px dashed var(--primary-dark);
+            background: var(--bg-zone);
+        }
+        #drawCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            pointer-events: auto;
+            border-radius: 12px;
+        }
+        .color-btn {
+            border: 1.3px solid var(--border);
+            width: 22px; height: 22px;
+            padding: 0;
+            cursor: pointer;
+            background: var(--input);
+        }
+        .transparent-checkbox {
+            vertical-align: middle;
+            margin-left: 0.4em;
+            accent-color: var(--primary);
+            filter: brightness(1.6);
+        }
+        input[type="number"], input[type="color"], input[type="text"], select {
+            background: var(--input);
+            color: var(--primary);
+            border: 1.1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.22em 0.75em;
+            font-size: 1em;
+            font-family: inherit;
+            box-shadow: 0 1px 0 #2ff92409;
+            outline: none;
+            transition: border .14s;
+        }
+        input[type="text"]::placeholder {
+            color: #61ffb473;
+        }
+        input[type="number"]:focus, input[type="color"]:focus, input[type="text"]:focus, select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 1px 0 #2FF92455;
+        }
+        input[type="color"] {
+            border-radius: 0.5em;
+            border: 1.5px solid var(--primary-fade);
+            width: 2.1em;
+            height: 2.1em;
+            padding:0;
+        }
+        input[type="range"] {
+            accent-color: var(--primary);
+        }
+        button, #genSVG, #downloadSVG, #copySVGDataURL {
+            background: linear-gradient(90deg, #223a23 0%, #185d18 90%);
+            border: 1.2px solid var(--border);
+            color: var(--primary);
+            font-weight: 700;
+            letter-spacing: 0.6px;
+            border-radius: 7px;
+            padding: 8px 22px;
+            font-size: 1em;
+            font-family: inherit;
+            cursor: pointer;
+            box-shadow: 0 2px 11px #34fa2c20;
+            transition: background 0.2s, color 0.17s, border 0.18s;
+        }
+        button:hover, #genSVG:hover, #downloadSVG:hover, #copySVGDataURL:hover {
+            background: linear-gradient(90deg, var(--primary-dark) 0%, var(--primary) 100%);
+            color: #142512;
+            border-color: var(--primary-fade);
+        }
+        #blobPreview {
+            width: 320px;
+            height: 320px;
+            display: none;
+            border: 2px solid var(--primary);
+            background: var(--bg-zone);
+            border-radius: 12px;
+            margin-bottom: 1em;
+        }
+        .note {
+            font-size: 0.98em;
+            color: #53f1aa;
+            letter-spacing: 0.12em;
+        }
+        .copy-feedback {
+            color: var(--primary-hov);
+            margin-left: 6px;
+            font-size: 1em;
+            display: none;
+            vertical-align: middle;
+        }
+        @media (max-width: 600px) {
+            #preview, #blobPreview, .draw-zone { max-width: 98vw;}
+            body { padding: 1em 0.1em;}
+            #controls { padding: 1.1em 0.2em;}
+        }
+        .zoom-tools {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            margin-bottom: 0.75em;
+        }
+        .zoom-tools button {
+            background: linear-gradient(90deg,#20e2a1 10%,#008a00 90%);
+            color: #fff;
+            border: none;
+            font-size: 1em;
+            font-weight: bold;
+            border-radius: 5px;
+            padding: 0.3em 1em;
+            cursor: pointer;
+            box-shadow: 0 0px 2px #26f56828;
+        }
+        .zoom-tools span {
+            min-width: 80px;
+            text-align: center;
+            font-size: 1em;
+            color: #62f36f;
+        }
+        input[type="checkbox"] {
+            accent-color: var(--primary);
+            filter: brightness(1.5) contrast(1.2);
+        }
+    </style>
+</head>
+<body>
+    <h2>Image to SVG Pixel Art Exporter</h2>
+    <div class="row">
+        <label for="imgInput">Upload image:</label>
+        <input type="file" id="imgInput" accept="image/*">
+        <span style="font-size:0.99em;color:#24b37a;">or</span>
+        <label for="imgURL" style="margin:0;">Web image URL:</label>
+        <input type="text" id="imgURL" placeholder="https://exampledomain.com/image.png" style="min-width:240px;">
+        <button type="button" id="loadURL">Load URL</button>
+    </div>
+    <div class="row" style="margin-bottom:1.2em;">
+        <button type="button" id="copySVGDataURL">Copy SVG Data Link</button>
+        <span id="copyFeedback" class="copy-feedback">Copied!</span>
+    </div>
+    <div id="controls" style="display:none;">
+        <div class="row">
+            <label for="quality">SVG Quality:</label>
+            <input type="number" id="quality" min="1" max="303" value="32">
+            <span class="note">Higher value = higher SVG quality (finer detail, bigger file). Max: 303</span>
+        </div>
+        <div class="row">
+            <label for="svgW">SVG width:</label>
+            <input type="number" id="svgW" min="1" max="4096" value="1">
+            <label for="svgH">SVG height:</label>
+            <input type="number" id="svgH" min="1" max="4096" value="1">
+            <span class="note">(px, default: same as image. Affects export/preview size only)</span>
+        </div>
+        <div class="row">
+            <label for="shapeType">Pixel shape:</label>
+            <select id="shapeType">
+                <option value="rect">Rectangle</option>
+                <option value="circle">Circle</option>
+            </select>
+        </div>
+        <div class="row">
+            <label for="gap">Gap (Line/space size):</label>
+            <input type="number" id="gap" step="0.01" min="-1" max="16" value="0.58">
+            <input type="checkbox" id="gapTransparent" class="transparent-checkbox"><label for="gapTransparent">transparent</label>
+            <span class="note">Use <b>gap = -1</b> for best results with device camera images, <b>0.58</b> means no gap (default)</span>
+            <label for="gapColor">Gap color:</label>
+            <input type="color" id="gapColor" value="#ffffff">
+            <input type="checkbox" id="gapColorTransparent" class="transparent-checkbox"><label for="gapColorTransparent">transparent</label>
+        </div>
+        <div class="row">
+            <label for="bgColor">SVG background:</label>
+            <input type="color" id="bgColor" value="#ffffff">
+            <input type="checkbox" id="bgColorTransparent" class="transparent-checkbox"><label for="bgColorTransparent">transparent</label>
+            <label>
+                <input type="checkbox" id="bgImgChk"> Use source image as bg
+            </label>
+            <label><input type="checkbox" id="invertColors"> Invert image color</label>
+        </div>
+        <div class="row">
+            <label>Replace color:</label>
+            <input type="color" id="replaceFrom" value="#000000">
+            <input type="checkbox" id="replaceFromTransparent" class="transparent-checkbox"><label for="replaceFromTransparent">transparent</label>
+            <span style="color:var(--primary)">→</span>
+            <input type="color" id="replaceTo" value="#FF00FF">
+            <input type="checkbox" id="replaceToTransparent" class="transparent-checkbox"><label for="replaceToTransparent">transparent</label>
+            <label for="replaceAlpha">Alpha:</label>
+            <input type="range" id="replaceAlpha" min="0" max="1" value="1" step="0.01">
+            <button type="button" id="pickFrom">Pick from preview</button>
+            <button type="button" id="replaceBtn">Replace Now</button>
+        </div>
+        <div class="row">
+            <button id="genSVG">Generate SVG</button>
+            <button id="downloadSVG" type="button">Download SVG as TXT</button>
+            <button id="openSVGPreview" type="button">Open SVG in Window (Zoomable)</button>
+        </div>
+    </div>
+    <div class="draw-zone">
+        <img id="preview" style="display:none; position:relative;z-index:1;" crossorigin="anonymous" />
+        <canvas id="drawCanvas" width="1" height="1" style="display:none; z-index:9; pointer-events:auto;"></canvas>
+    </div>
+    <div><b>Blob preview (SVG):</b></div>
+    <object id="blobPreview" type="image/svg+xml"></object>
+    <script>
+        // Elements
+        const imgInput = document.getElementById('imgInput');
+        const imgURL = document.getElementById('imgURL');
+        const loadURLBtn = document.getElementById('loadURL');
+        const copySVGDataURLBtn = document.getElementById('copySVGDataURL');
+        const copyFeedback = document.getElementById('copyFeedback');
+        const preview = document.getElementById('preview');
+        const controls = document.getElementById('controls');
+        const qualityInput = document.getElementById('quality');
+        const gapInput = document.getElementById('gap');
+        const gapTransparent = document.getElementById('gapTransparent');
+        const gapColorInput = document.getElementById('gapColor');
+        const gapColorTransparent = document.getElementById('gapColorTransparent');
+        const bgColorInput = document.getElementById('bgColor');
+        const bgColorTransparent = document.getElementById('bgColorTransparent');
+        const bgImgChk = document.getElementById('bgImgChk');
+        const invertChk = document.getElementById('invertColors');
+        const genSVGBtn = document.getElementById('genSVG');
+        const openSVGPreviewBtn = document.getElementById('openSVGPreview');
+        const downloadSVGBtn = document.getElementById('downloadSVG');
+        const replaceFrom = document.getElementById('replaceFrom');
+        const replaceFromTransparent = document.getElementById('replaceFromTransparent');
+        const replaceTo = document.getElementById('replaceTo');
+        const replaceToTransparent = document.getElementById('replaceToTransparent');
+        const replaceAlpha = document.getElementById('replaceAlpha');
+        const pickFromBtn = document.getElementById('pickFrom');
+        const replaceBtn = document.getElementById('replaceBtn');
+        const blobPreview = document.getElementById('blobPreview');
+        const drawCanvas = document.getElementById('drawCanvas');
+        const svgWInput = document.getElementById('svgW');
+        const svgHInput = document.getElementById('svgH');
+        const shapeType = document.getElementById('shapeType');
+ 
+        let loadedImage = null;
+        let drawBuffer = [];
+        let currentSVG = "";
+        let imgData = null;
+        let imgNaturalW = 320;
+        let imgNaturalH = 320;
+
+        function getColorOrTransparent(colorInput, transparentCheckbox) {
+            return transparentCheckbox.checked
+                ? "rgba(0,0,0,0)"
+                : colorInput.value;
+        }
+        function getColorRGBA(colorInput, transparentCheckbox, alpha) {
+            if (transparentCheckbox.checked) return "rgba(0,0,0,0)";
+            if (typeof alpha === "number" && alpha < 1) {
+                let c = colorInput.value.replace("#", "");
+                if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+                let num = parseInt(c,16);
+                return `rgba(${(num>>16)&255},${(num>>8)&255},${num&255},${alpha})`;
+            }
+            return colorInput.value;
+        }
+
+        imgInput.addEventListener('change', function (event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function (ev) {
+                    preview.src = ev.target.result;
+                    preview.style.display = '';
+                    controls.style.display = '';
+                    loadedImage = ev.target.result;
+                    drawBuffer = [];
+                    drawCanvas.width = 1; drawCanvas.height = 1; drawCanvas.style.display = 'none';
+                    showBlobPreview('');
+                    currentSVG = "";
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Load image from web URL
+        loadURLBtn.addEventListener('click', function () {
+            const url = imgURL.value.trim();
+            if (!url) {
+                alert("Please enter a valid image URL.");
+                return;
+            }
+            preview.crossOrigin = "anonymous";
+            preview.onload = function() {
+                if (preview.naturalWidth > 0 && preview.naturalHeight > 0) {
+                    controls.style.display = '';
+                    loadedImage = url;
+                    drawBuffer = [];
+                    drawCanvas.width = 1; drawCanvas.height = 1; drawCanvas.style.display = 'none';
+                    showBlobPreview('');
+                    currentSVG = "";
+                } else {
+                    alert("Image could not be loaded. Check URL or CORS.");
+                    preview.style.display = "none";
+                }
+            };
+            preview.onerror = function() {
+                alert("Image could not be loaded. Check URL or CORS.");
+                preview.style.display = "none";
+            };
+            preview.src = url;
+            preview.style.display = '';
+        });
+
+        // Set SVG width/height after image loads
+        preview.addEventListener('load', function() {
+            if (preview.naturalWidth > 0 && preview.naturalHeight > 0) {
+                imgNaturalW = preview.naturalWidth;
+                imgNaturalH = preview.naturalHeight;
+                svgWInput.value = imgNaturalW;
+                svgHInput.value = imgNaturalH;
+            }
+        });
+
+        function hexToRgbA(hex, a=1){
+            let c = hex.replace('#','');
+            if(c.length===3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+            let num = parseInt(c,16);
+            return `rgba(${(num>>16)&255},${(num>>8)&255},${num&255},${a})`;
+        }
+        function flatRGBA(str){
+            let m = /rgba?\((\d+), *(\d+), *(\d+),? *([\d.]*)\)/.exec(str);
+            if(m) return [Number(m[1]),Number(m[2]),Number(m[3]), m[4]?Number(m[4]):1];
+            if(typeof str === "string" && str.startsWith('#')) {
+                // parse as r,g,b,1
+                let c = str.substr(1);
+                if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+                let num = parseInt(c,16);
+                return [(num>>16)&255,(num>>8)&255,num&255,1];
+            }
+            return [0,0,0,1];
+        }
+        function almostEqual(a, b){
+            return Math.abs(a[0]-b[0])<=2 && Math.abs(a[1]-b[1])<=2 && Math.abs(a[2]-b[2])<=2 && Math.abs(a[3]-b[3])<=0.04;
+        }
+
+        pickFromBtn.addEventListener('click', function(){
+            preview.style.cursor = "crosshair";
+            function pick(e){
+                const rect = preview.getBoundingClientRect();
+                const x = Math.floor((e.clientX-rect.left) * preview.naturalWidth / preview.width);
+                const y = Math.floor((e.clientY-rect.top) * preview.naturalHeight / preview.height);
+                const tempC = document.createElement('canvas');
+                tempC.width = preview.naturalWidth;
+                tempC.height = preview.naturalHeight;
+                tempC.getContext('2d').drawImage(preview,0,0);
+                let d = tempC.getContext('2d').getImageData(x,y,1,1).data;
+                let hex = "#" + [d[0],d[1],d[2]].map(x=>x.toString(16).padStart(2,'0')).join('');
+                replaceFrom.value = hex;
+                replaceAlpha.value = (d[3]/255).toFixed(2);
+                replaceFromTransparent.checked = d[3] === 0;
+                preview.removeEventListener('click', pick);
+                preview.style.cursor = "";
+            }
+            preview.addEventListener('click', pick);
+        });
+
+        replaceBtn.addEventListener('click', function(){
+            if(!imgData) return alert('You must load an image and generate SVG once before replacing colors.');
+            let fromColor = getColorRGBA(replaceFrom, replaceFromTransparent, Number(replaceAlpha.value));
+            let toColor = getColorRGBA(replaceTo, replaceToTransparent, Number(replaceAlpha.value));
+            const flatFrom = flatRGBA(fromColor), flatTo = flatRGBA(toColor);
+
+            for(let i=0; i<imgData.data.length; i+=4){
+                let a = imgData.data[i+3]/255, cmp = [imgData.data[i], imgData.data[i+1], imgData.data[i+2], a];
+                if(almostEqual(cmp, flatFrom)){
+                    imgData.data[i]=flatTo[0]; imgData.data[i+1]=flatTo[1]; imgData.data[i+2]=flatTo[2]; imgData.data[i+3]=flatTo[3]*255;
+                }
+            }
+            redrawSVG();
+        });
+
+        let drawing = false, lastPt = null;
+        function resizeDrawCanvas(w,h){
+            drawCanvas.width=w;
+            drawCanvas.height=h;
+            drawCanvas.style.width = preview.style.width;
+            drawCanvas.style.height = preview.style.height;
+            drawCanvas.style.display = '';
+        }
+        function updateDrawCanvas(){
+            drawCanvas.getContext('2d').clearRect(0,0,drawCanvas.width,drawCanvas.height);
+            for(const d of drawBuffer){
+                drawCanvas.getContext('2d').strokeStyle = d.color;
+                drawCanvas.getContext('2d').lineWidth = d.size;
+                drawCanvas.getContext('2d').lineCap="round";
+                drawCanvas.getContext('2d').beginPath();
+                drawCanvas.getContext('2d').moveTo(d.fromX, d.fromY);
+                drawCanvas.getContext('2d').lineTo(d.toX, d.toY);
+                drawCanvas.getContext('2d').stroke();
+            }
+        }
+        preview.addEventListener('mousedown', function(evt){
+            if(!loadedImage) return;
+            drawing = true;
+            lastPt = getMouseForCanvas(evt);
+        });
+        document.addEventListener('mouseup', ()=>drawing=false);
+        preview.addEventListener('mousemove', function(evt){
+            if(!drawing) return;
+            let cur = getMouseForCanvas(evt);
+            if(lastPt){
+                let color = "#ff2222", size= 3;
+                drawBuffer.push({fromX:lastPt.x, fromY:lastPt.y, toX:cur.x, toY:cur.y, color, size});
+            }
+            lastPt=cur;
+            resizeDrawCanvas(preview.width,preview.height);
+            updateDrawCanvas();
+        });
+        function getMouseForCanvas(evt){
+            const rect = preview.getBoundingClientRect();
+            return {
+                x: Math.floor((evt.clientX-rect.left) * preview.naturalWidth / preview.width),
+                y: Math.floor((evt.clientY-rect.top) * preview.naturalHeight / preview.height)
+            };
+        }
+
+        genSVGBtn.addEventListener('click', redrawSVG);
+        function redrawSVG(){
+            if(!loadedImage) return;
+            const img = new window.Image();
+            img.src = loadedImage;
+            img.crossOrigin="anonymous";
+            img.onload = function () {
+                const quality = Math.max(1, Math.min(303, parseInt(qualityInput.value, 10) || 32));
+                const svgW = Math.max(1, Math.min(4096, parseInt(svgWInput.value, 10) || imgNaturalW));
+                const svgH = Math.max(1, Math.min(4096, parseInt(svgHInput.value, 10) || imgNaturalH));
+                let gapV = parseFloat(gapInput.value);
+                const gap = isNaN(gapV) ? 0.58 : gapV;
+                const lcolor_str = getColorOrTransparent(gapColorInput, gapColorTransparent);
+                const shape = shapeType.value;
+                const imageW = img.width, imageH = img.height;
+                const scale = Math.min(quality / imageW, quality / imageH);
+                const drawW = Math.max(1, Math.round(imageW * scale));
+                const drawH = Math.max(1, Math.round(imageH * scale));
+                preview.width = drawW;
+                preview.height = drawH;
+                resizeDrawCanvas(drawW, drawH);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = drawW;
+                canvas.height = drawH;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, drawW, drawH);
+                imgData = ctx.getImageData(0,0,drawW,drawH);
+
+                const pixelSizeW = svgW / drawW;
+                const pixelSizeH = svgH / drawH;
+                let BG = "";
+                if (bgImgChk.checked) {
+                    BG = `<image href="${loadedImage}" width="${svgW}" height="${svgH}"/>`;
+                } else {
+                    const bgFill = getColorOrTransparent(bgColorInput, bgColorTransparent);
+                    BG = `<rect width="100%" height="100%" fill="${bgFill}"/>`;
+                }
+
+                let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${BG}`;
+
+                for (let y = 0; y < drawH; y++) {
+                    for (let x = 0; x < drawW; x++) {
+                        const idx = (y * drawW + x) * 4;
+                        let r = imgData.data[idx], g = imgData.data[idx + 1], b = imgData.data[idx + 2], a = imgData.data[idx + 3] / 255;
+                        if (invertChk.checked) {
+                            r = 255 - r; g = 255 - g; b = 255 - b;
+                        }
+                        if (a > 0) {
+                            let cx = x*pixelSizeW, cy = y*pixelSizeH;
+                            let fill = `rgba(${r},${g},${b},${a.toFixed(2)})`;
+                            if(shape==="rect") {
+                                svg += `<rect x="${cx}" y="${cy}" width="${pixelSizeW-gap}" height="${pixelSizeH-gap}" fill="${fill}"/>`;
+                                if(gap>0 && lcolor_str){
+                                    if(x<drawW-1) svg += `<rect x="${cx+(pixelSizeW-gap)}" y="${cy}" width="${gap}" height="${pixelSizeH-gap}" fill="${lcolor_str}" />`;
+                                    if(y<drawH-1) svg += `<rect x="${cx}" y="${cy+(pixelSizeH-gap)}" width="${pixelSizeW-gap}" height="${gap}" fill="${lcolor_str}" />`;
+                                }
+                            } else { // circle mode
+                                let diam=Math.min(pixelSizeW-gap,pixelSizeH-gap), rx=diam/2;
+                                svg += `<circle cx="${cx+pixelSizeW/2}" cy="${cy+pixelSizeH/2}" r="${rx}" fill="${fill}"/>`;
+                                if(gap>0 && lcolor_str){
+                                    if(x<drawW-1) svg += `<rect x="${cx+(pixelSizeW-gap)}" y="${cy}" width="${gap}" height="${pixelSizeH-gap}" fill="${lcolor_str}" />`;
+                                    if(y<drawH-1) svg += `<rect x="${cx}" y="${cy+(pixelSizeH-gap)}" width="${pixelSizeW-gap}" height="${gap}" fill="${lcolor_str}" />`;
+                                }
+                            }
+                        }
+                    }
+                }
+                if(drawBuffer.length){
+                    svg += `<g id="drawLayer">`;
+                    for(const d of drawBuffer){
+                        svg += `<path d="M${d.fromX},${d.fromY}L${d.toX},${d.toY}" stroke="${d.color}" stroke-width="${d.size}" stroke-linecap="round" fill="none"/>`;
+                    }
+                    svg += `</g>`;
+                }
+                svg += "</svg>";
+                currentSVG = svg;
+                showBlobPreview(svg);
+            }
+        }
+
+        downloadSVGBtn.addEventListener('click', function() {
+            if (!currentSVG) {
+                alert("No SVG generated yet! Click 'Generate SVG' first.");
+                return;
+            }
+            const blob = new Blob([currentSVG], { type: 'image/svg+xml' });
+            const link = document.createElement('a');
+            link.download = 'PixalArt.svg';
+            link.href = URL.createObjectURL(blob);
+            link.click();
+            URL.revokeObjectURL(link.href);
+        });
+
+        // Copy SVG data: data:image/svg+xml;base64,...
+        copySVGDataURLBtn.addEventListener('click', function() {
+            if (!currentSVG) {
+                alert("No SVG generated yet to copy.");
+                return;
+            }
+            function svgToBase64(svg) {
+                return window.btoa(unescape(encodeURIComponent(svg)));
+            }
+            const dataurl = "data:image/svg+xml;base64," + svgToBase64(currentSVG);
+            navigator.clipboard.writeText(dataurl).then(() => {
+                copyFeedback.style.display = "inline";
+                setTimeout(() => { copyFeedback.style.display = "none"; }, 1400);
+            }).catch(() => {
+                alert("Could not copy. Try again or check browser permissions.");
+            });
+        });
+
+        function showBlobPreview(svg){
+            if(!svg) { blobPreview.style.display='none'; return; }
+            const blob = new Blob([svg], { type: "image/svg+xml" });
+            const url = URL.createObjectURL(blob);
+            blobPreview.style.display='';
+            blobPreview.data = url;
+            blobPreview.onload = ()=>{ URL.revokeObjectURL(url);}
+        }
+
+        openSVGPreviewBtn.addEventListener('click', function(){
+            if(!currentSVG) { alert("No SVG generated yet! Click 'Generate SVG' first."); return; }
+            const w = window.open('xn--67/viewSVG');
+            const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SVG Preview</title>
+    <style>
+        body { background: #eef0fe; margin: 0; padding: 0; }
+        .zoom-tools { display:flex; gap:0.5em; align-items:center; padding:1em; background: #e8ebfb; box-shadow:0 1px 6px #b2bbfa33; position:sticky; top:0; z-index:5;}
+        .zoom-tools button { background: linear-gradient(90deg,#45cafc 10%,#303f9f 90%); color:#fff; font-weight:bold; border:none; border-radius:5px; padding:0.3em 1em; font-size:1.1em; cursor:pointer;}
+        .zoom-tools span { min-width:90px;font-size:1.05em;}
+        #svgcont { display:flex; flex-direction:column; padding:0 0.5em 1em 0.5em; align-items:center; margin:auto; }
+        #svgg { box-shadow:0 2px 24px #9fa5e444; border-radius:16px; background:#fff; display:block;}
+    </style>
+</head>
+<body>
+    <div class="zoom-tools">
+        <button id="zoomin">＋</button>
+        <button id="zoomout">－</button>
+        <button id="reset">1:1</button>
+        <span id="zoomval">100%</span>
+    </div>
+    <div id="svgcont">
+      <div id="svgg"></div>
+    </div>
+<script>
+let scale = 1;
+const minz=0.1, maxz=8;
+function setZoom(val) {
+    scale = Math.max(minz, Math.min(maxz, val));
+    document.getElementById('svgg').style.transform = "scale("+scale+")";
+    document.getElementById('zoomval').textContent = Math.round(scale*100)+'%';
+}
+document.getElementById('zoomin').onclick = () => setZoom(scale*1.25);
+document.getElementById('zoomout').onclick = () => setZoom(scale/1.25);
+document.getElementById('reset').onclick = () => setZoom(1);
+setZoom(1);
+document.getElementById('svgg').innerHTML = \`${currentSVG.replace(/`/g, '\\`')}\`;
+<\/script>
+</body>
+</html>`;
+            w.document.open();
+            w.document.write(html);
+            w.document.close();
+        });
+    </script>
+</body>
+</html>
